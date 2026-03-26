@@ -1,5 +1,5 @@
 import pytest
-from cadquery import Vector
+from build123d import Vector
 import caid
 
 
@@ -25,7 +25,7 @@ def test_move(box_shape):
     asm = asm.add(caid.Part("a", box_shape))
     asm2 = asm.move("a", Vector(100, 0, 0))
     p = asm2.get("a")
-    assert abs(p.origin.x - 100.0) < 0.01
+    assert abs(p.origin.X - 100.0) < 0.01
 
 
 def test_merge_all(box_shape):

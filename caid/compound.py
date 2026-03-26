@@ -2,8 +2,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from cadquery import Vector
-from cadquery.occ_impl.shapes import Shape
+from build123d import Vector, Wire, Solid as B123dSolid
 
 from OCP.BRepAdaptor import BRepAdaptor_CompCurve
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
@@ -89,7 +88,7 @@ def array_on_curve(
                 failed_indices.append(idx)
                 continue
 
-            new_shape = Shape.cast(builder.Shape())
+            new_shape = B123dSolid(builder.Shape())
             checks = check_valid(new_shape)
             if not checks["is_valid"]:
                 failed_indices.append(idx)
@@ -143,9 +142,9 @@ def belt_wire(
     if len(pulleys) < 2:
         return _fail("need at least 2 pulleys")
     try:
-        centers = [(p[0].x, p[0].y) for p in pulleys]
+        centers = [(p[0].X, p[0].Y) for p in pulleys]
         radii = [p[1] for p in pulleys]
-        z_val = pulleys[0][0].z
+        z_val = pulleys[0][0].Z
         n = len(pulleys)
 
         # Validate no coincident pulleys
@@ -175,7 +174,7 @@ def belt_wire(
             if not wire_builder.IsDone():
                 return _fail("failed to assemble open belt wire")
             return ForgeResult(
-                shape=Shape.cast(wire_builder.Wire()), valid=True,
+                shape=Wire(wire_builder.Wire()), valid=True,
                 diagnostics={"n_edges": len(edges)},
             )
 
@@ -220,7 +219,7 @@ def belt_wire(
             return _fail("failed to assemble belt wire")
 
         return ForgeResult(
-            shape=Shape.cast(wire_builder.Wire()), valid=True,
+            shape=Wire(wire_builder.Wire()), valid=True,
             diagnostics={"n_edges": len(all_edges)},
         )
     except Exception as e:
@@ -236,7 +235,7 @@ def pulley_assembly(
         return wire_result
 
     profile_wire = profile
-    if hasattr(profile, "outerWire"):
-        profile_wire = profile.outerWire()
+    if hasattr(profile, "outer_wire"):
+        profile_wire = profile.outer_wire()
 
     return ops.sweep(profile_wire, wire_result.shape)

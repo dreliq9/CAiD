@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Any
-import cadquery as cq
-from cadquery import Vector
+from build123d import Solid, Vector
 from .result import ForgeResult
 from ._backend import get_backend
 
@@ -29,11 +28,7 @@ def add_hole(
 ) -> ForgeResult:
     """Cut a cylindrical hole through a face of a solid.
 
-    Args:
-        shape: The solid to drill into.
-        radius: Hole radius in mm.
-        depth: Hole depth in mm. If None, cuts all the way through.
-        face_selector: CadQuery face selector for the drilling face (default ">Z", top face).
+    Uses boolean cut with a cylinder positioned at the center of the selected face.
     """
     if radius <= 0:
         return _fail(f"hole radius must be > 0, got {radius}")
@@ -41,12 +36,51 @@ def add_hole(
         s = _extract_shape(shape)
         b_ = get_backend()
         v_before = b_.get_volume(s)
-        wp = cq.Workplane("XY").add(s).faces(face_selector).workplane()
-        if depth:
-            result_wp = wp.hole(radius * 2, depth)
-        else:
-            result_wp = wp.hole(radius * 2)
-        result = result_wp.val()
+
+        # Find the target face using selector
+        faces = s.faces()
+        target_face = _select_face(faces, face_selector)
+        if target_face is None:
+            return _fail(f"face selector '{face_selector}' matched no face")
+
+        # Get face center and normal for hole placement
+        center = target_face.center()
+        normal = target_face.normal_at(center)
+
+        # Determine hole depth: if None, use shape bounding box diagonal
+        if depth is None:
+            bb = s.bounding_box()
+            depth = bb.diagonal * 2  # ensure through-hole
+
+        # Build a cylinder tool along the inward normal (opposite face normal)
+        cyl = Solid.make_cylinder(radius, depth)
+        # Position: translate to center, oriented along -normal
+        # Default cylinder is along Z, so rotate from Z to -normal
+        from build123d import Axis
+        neg_normal = Vector(-normal.X, -normal.Y, -normal.Z)
+        z_axis = Vector(0, 0, 1)
+
+        # Place cylinder: start above center along normal, cut downward
+        start = Vector(
+            center.X + normal.X * depth * 0.1,
+            center.Y + normal.Y * depth * 0.1,
+            center.Z + normal.Z * depth * 0.1,
+        )
+
+        # Rotate cylinder from Z-axis to -normal direction
+        cross = z_axis.cross(neg_normal)
+        if cross.length > 1e-10:
+            angle = z_axis.get_angle(neg_normal) * 180.0 / 3.141592653589793
+            ax = Axis(Vector(0, 0, 0), cross)
+            cyl = cyl.rotate(ax, angle)
+        elif neg_normal.Z < 0:
+            # 180 degree flip
+            ax = Axis(Vector(0, 0, 0), Vector(1, 0, 0))
+            cyl = cyl.rotate(ax, 180.0)
+
+        cyl = cyl.translate(start)
+        result = b_.boolean_cut(s, cyl)
+
         vr = b_.get_volume(result)
         if vr >= v_before * (1 - _REL_TOL):
             return ForgeResult(
@@ -65,6 +99,32 @@ def add_hole(
         )
     except Exception as e:
         return _fail("add_hole failed", exception=str(e))
+
+
+def _select_face(faces, selector: str):
+    """Select a face using CQ-style selector strings (>Z, <Z, >X, etc.)."""
+    if not faces:
+        return None
+    sel = selector.strip()
+    if len(sel) < 2:
+        return faces[0] if faces else None
+
+    axis_map = {"X": Vector(1, 0, 0), "Y": Vector(0, 1, 0), "Z": Vector(0, 0, 1)}
+    op = sel[0]
+    axis_key = sel[1:].upper()
+    axis_vec = axis_map.get(axis_key)
+    if axis_vec is None:
+        return faces[0] if faces else None
+
+    def _center_val(f):
+        c = f.center()
+        return c.X * axis_vec.X + c.Y * axis_vec.Y + c.Z * axis_vec.Z
+
+    if op == ">":
+        return max(faces, key=_center_val)
+    elif op == "<":
+        return min(faces, key=_center_val)
+    return faces[0] if faces else None
 
 
 def boolean_union(a: ForgeResult | Any, b: ForgeResult | Any) -> ForgeResult:
@@ -298,7 +358,7 @@ def scale(shape: ForgeResult | Any, factor: float, origin: Vector = Vector(0, 0,
         shape = _extract_shape(shape)
         b_ = get_backend()
         if origin != Vector(0, 0, 0):
-            shape = b_.translate(shape, Vector(-origin.x, -origin.y, -origin.z))
+            shape = b_.translate(shape, Vector(-origin.X, -origin.Y, -origin.Z))
         result = b_.scale(shape, factor)
         if origin != Vector(0, 0, 0):
             result = b_.translate(result, origin)

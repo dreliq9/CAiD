@@ -9,7 +9,7 @@ from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX, TopAbs_SOLID
 from OCP.TopoDS import TopoDS
-from cadquery.occ_impl.shapes import Shape
+from build123d import Solid as B123dSolid, Compound as B123dCompound
 
 from .result import ForgeResult
 from ._backend import get_backend
@@ -25,10 +25,20 @@ def _count_topo(wrapped_shape, topo_type) -> int:
 
 
 def _get_wrapped(shape: Any):
-    """Get the OCP TopoDS_Shape from a CQ shape."""
+    """Get the OCP TopoDS_Shape from a build123d shape."""
     if hasattr(shape, "wrapped"):
         return shape.wrapped
     return shape
+
+
+def _wrap_ocp_shape(ocp_shape):
+    """Wrap an OCP TopoDS_Shape back into a build123d object."""
+    # Try to extract a solid first (most common case)
+    exp = TopExp_Explorer(ocp_shape, TopAbs_SOLID)
+    if exp.More():
+        return B123dSolid(TopoDS.Solid_s(exp.Current()))
+    # Fallback: wrap as compound
+    return B123dCompound(ocp_shape)
 
 
 def check_valid(shape: Any) -> dict:
@@ -86,7 +96,7 @@ def heal(shape: Any, precision: float = 1e-3) -> ForgeResult:
         unifier.Build()
         result = unifier.Shape()
 
-        cq_shape = Shape.cast(result)
+        cq_shape = _wrap_ocp_shape(result)
         checks_after = check_valid(cq_shape)
 
         b = get_backend()
@@ -113,7 +123,7 @@ def simplify(shape: Any, tolerance: float = 0.01) -> ForgeResult:
         unifier = ShapeUpgrade_UnifySameDomain(wrapped, True, True, True)
         unifier.Build()
         result = unifier.Shape()
-        cq_shape = Shape.cast(result)
+        cq_shape = _wrap_ocp_shape(result)
 
         b = get_backend()
         checks = check_valid(cq_shape)

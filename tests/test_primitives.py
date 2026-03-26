@@ -1,6 +1,6 @@
 import math
 import pytest
-from cadquery import Vector
+from build123d import Vector
 import caid
 
 

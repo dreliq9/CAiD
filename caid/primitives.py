@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from cadquery import Vector
+from build123d import Vector
 from .result import ForgeResult
 from ._backend import get_backend
 
@@ -19,18 +19,18 @@ def _positive_check(**kwargs) -> str | None:
 
 
 def _vectors_parallel(a: Vector, b: Vector) -> bool:
-    if a.Length < 1e-10 or b.Length < 1e-10:
+    if a.length < 1e-10 or b.length < 1e-10:
         return False
-    return a.cross(b).Length < 1e-10
+    return a.cross(b).length < 1e-10
 
 
 def _reorient(shape, origin: Vector, axis: Vector, default_axis: Vector = Vector(0, 0, 1)):
     """Rotate shape from default_axis to axis, then translate to origin."""
     b = get_backend()
     if not _vectors_parallel(axis, default_axis):
-        angle = default_axis.getAngle(axis) * 180.0 / math.pi
+        angle = default_axis.get_angle(axis) * 180.0 / math.pi
         cross = default_axis.cross(axis)
-        if cross.Length > 1e-10:
+        if cross.length > 1e-10:
             shape = b.rotate(shape, Vector(0, 0, 0), cross, angle)
     if origin != Vector(0, 0, 0):
         shape = b.translate(shape, origin)
@@ -79,25 +79,25 @@ def box(
             shape = _reorient(shape, Vector(0, 0, 0), z_norm, default_z)
             # After Z alignment, figure out where X landed and twist to match x_dir
             if not _vectors_parallel(z_norm, default_z):
-                angle_z = default_z.getAngle(z_norm) * 180.0 / math.pi
+                angle_z = default_z.get_angle(z_norm) * 180.0 / math.pi
                 cross = default_z.cross(z_norm)
-                if cross.Length > 1e-10:
+                if cross.length > 1e-10:
                     # X axis rotated by same rotation — compute where it ended up
                     cos_a = math.cos(math.radians(angle_z))
                     sin_a = math.sin(math.radians(angle_z))
                     cn = cross.normalized()
                     # Rodrigues' rotation of default_x around cross by angle_z
-                    dot = cn.x * default_x.x + cn.y * default_x.y + cn.z * default_x.z
+                    dot = cn.X * default_x.X + cn.Y * default_x.Y + cn.Z * default_x.Z
                     cx = cn.cross(default_x)
                     rotated_x = Vector(
-                        default_x.x * cos_a + cx.x * sin_a + cn.x * dot * (1 - cos_a),
-                        default_x.y * cos_a + cx.y * sin_a + cn.y * dot * (1 - cos_a),
-                        default_x.z * cos_a + cx.z * sin_a + cn.z * dot * (1 - cos_a),
+                        default_x.X * cos_a + cx.X * sin_a + cn.X * dot * (1 - cos_a),
+                        default_x.Y * cos_a + cx.Y * sin_a + cn.Y * dot * (1 - cos_a),
+                        default_x.Z * cos_a + cx.Z * sin_a + cn.Z * dot * (1 - cos_a),
                     )
                     # Now twist around z_norm to align rotated_x with x_norm
-                    twist = rotated_x.getAngle(x_norm)
+                    twist = rotated_x.get_angle(x_norm)
                     twist_cross = rotated_x.cross(x_norm)
-                    if twist_cross.Length > 1e-10:
+                    if twist_cross.length > 1e-10:
                         twist_sign = 1.0 if twist_cross.dot(z_norm) > 0 else -1.0
                         shape = b.rotate(shape, Vector(0, 0, 0), z_norm, twist_sign * twist * 180.0 / math.pi)
         if origin != Vector(0, 0, 0):

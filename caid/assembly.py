@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
-from cadquery import Vector
+from build123d import Vector
 
 from .result import ForgeResult
 from ._backend import get_backend
@@ -35,9 +35,9 @@ class Assembly:
             if p.name == name:
                 new_shape = b.translate(p.shape, vector)
                 new_origin = Vector(
-                    p.origin.x + vector.x,
-                    p.origin.y + vector.y,
-                    p.origin.z + vector.z,
+                    p.origin.X + vector.X,
+                    p.origin.Y + vector.Y,
+                    p.origin.Z + vector.Z,
                 )
                 new_parts.append(Part(p.name, new_shape, new_origin, dict(p.metadata)))
             else:
@@ -92,7 +92,7 @@ class Assembly:
         return [
             {
                 "name": p.name,
-                "origin": [p.origin.x, p.origin.y, p.origin.z],
+                "origin": [p.origin.X, p.origin.Y, p.origin.Z],
                 "metadata": p.metadata,
             }
             for p in self._parts

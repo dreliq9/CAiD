@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import cadquery as cq
+from build123d import export_stl, export_step, export_brep, import_step, import_brep
 
 from .result import ForgeResult
 from ._backend import get_backend
@@ -17,7 +17,7 @@ def _fail(reason: str, **extra) -> ForgeResult:
 def to_stl(shape: Any, path: str | Path, tolerance: float = 0.1, angular_tolerance: float = 0.1) -> ForgeResult:
     try:
         p = str(Path(path))
-        ok = shape.exportStl(p, tolerance=tolerance, angularTolerance=angular_tolerance)
+        ok = export_stl(shape, p, tolerance=tolerance, angular_tolerance=angular_tolerance)
         if not ok:
             return _fail("STL export returned failure")
         return ForgeResult(shape=None, valid=True)
@@ -28,7 +28,7 @@ def to_stl(shape: Any, path: str | Path, tolerance: float = 0.1, angular_toleran
 def to_step(shape: Any, path: str | Path) -> ForgeResult:
     try:
         p = str(Path(path))
-        shape.exportStep(p)
+        export_step(shape, p)
         if not Path(p).exists():
             return _fail("STEP export produced no file")
         return ForgeResult(shape=None, valid=True)
@@ -39,7 +39,7 @@ def to_step(shape: Any, path: str | Path) -> ForgeResult:
 def to_brep(shape: Any, path: str | Path) -> ForgeResult:
     try:
         p = str(Path(path))
-        shape.exportBrep(p)
+        export_brep(shape, p)
         if not Path(p).exists():
             return _fail("BREP export produced no file")
         return ForgeResult(shape=None, valid=True)
@@ -50,8 +50,13 @@ def to_brep(shape: Any, path: str | Path) -> ForgeResult:
 def from_step(path: str | Path) -> ForgeResult:
     try:
         p = str(Path(path))
-        wp = cq.importers.importStep(p)
-        shape = wp.val()
+        compound = import_step(p)
+        # import_step returns a Compound; get the first solid
+        solids = compound.solids()
+        if solids:
+            shape = solids[0] if len(solids) == 1 else compound
+        else:
+            shape = compound
         b = get_backend()
         return ForgeResult(
             shape=shape, valid=True,
@@ -65,7 +70,7 @@ def from_step(path: str | Path) -> ForgeResult:
 def from_brep(path: str | Path) -> ForgeResult:
     try:
         p = str(Path(path))
-        shape = cq.Shape.importBrep(p)
+        shape = import_brep(p)
         b = get_backend()
         return ForgeResult(
             shape=shape, valid=True,

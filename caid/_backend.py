@@ -2,8 +2,7 @@ from __future__ import annotations
 import math
 from typing import Protocol, Any, runtime_checkable
 
-import cadquery as cq
-from cadquery import Vector
+from build123d import Solid, Vector, Axis, Plane, Edge, Wire, Face, Shape
 import numpy as np
 
 
@@ -31,23 +30,23 @@ class BackendProtocol(Protocol):
     def tessellate(self, shape: Any, tolerance: float = 0.1) -> tuple[np.ndarray, np.ndarray]: ...
 
 
-class CadQueryBackend:
-    """Default backend. Implements BackendProtocol via cadquery."""
+class Build123dBackend:
+    """Default backend. Implements BackendProtocol via build123d."""
 
     def make_box(self, l: float, w: float, h: float) -> Any:
-        return cq.Solid.makeBox(l, w, h)
+        return Solid.make_box(l, w, h)
 
     def make_cylinder(self, radius: float, height: float) -> Any:
-        return cq.Solid.makeCylinder(radius, height)
+        return Solid.make_cylinder(radius, height)
 
     def make_sphere(self, radius: float) -> Any:
-        return cq.Solid.makeSphere(radius, angleDegrees1=-90, angleDegrees2=90)
+        return Solid.make_sphere(radius)
 
     def make_cone(self, r1: float, r2: float, height: float) -> Any:
-        return cq.Solid.makeCone(r1, r2, height)
+        return Solid.make_cone(r1, r2, height)
 
     def make_torus(self, r1: float, r2: float) -> Any:
-        return cq.Solid.makeTorus(r1, r2)
+        return Solid.make_torus(r1, r2)
 
     def boolean_union(self, a: Any, b: Any) -> Any:
         return a.fuse(b)
@@ -60,53 +59,104 @@ class CadQueryBackend:
 
     def extrude(self, face: Any, direction: Vector, distance: float) -> Any:
         d = direction.normalized()
-        vec = Vector(d.x * distance, d.y * distance, d.z * distance)
-        outer = face.outerWire()
-        inner = [w for w in face.Wires() if not w.IsSame(outer)]
-        return cq.Solid.extrudeLinear(outer, inner, vec)
+        vec = Vector(d.X * distance, d.Y * distance, d.Z * distance)
+        return Solid.extrude(face, vec)
 
     def sweep(self, profile: Any, path: Any) -> Any:
-        return cq.Solid.sweep(profile, [], path)
+        return Solid.sweep(profile, path)
 
     def fillet(self, shape: Any, radius: float, edges: list | None = None) -> Any:
         if edges is None:
-            edges = shape.Edges()
+            edges = shape.edges()
         return shape.fillet(radius, edges)
 
     def chamfer(self, shape: Any, distance: float, edges: list | None = None) -> Any:
         if edges is None:
-            edges = shape.Edges()
+            edges = shape.edges()
         return shape.chamfer(distance, None, edges)
 
     def get_volume(self, shape: Any) -> float:
-        return shape.Volume()
+        return shape.volume
 
     def get_surface_area(self, shape: Any) -> float:
-        return shape.Area()
+        return shape.area
 
     def translate(self, shape: Any, vector: Vector) -> Any:
         return shape.translate(vector)
 
     def rotate(self, shape: Any, axis_origin: Vector, axis_dir: Vector, angle_deg: float) -> Any:
-        return shape.rotate(axis_origin, axis_origin + axis_dir, angle_deg)
+        ax = Axis(axis_origin, axis_dir)
+        return shape.rotate(ax, angle_deg)
 
     def mirror(self, shape: Any, plane_normal: Vector, plane_origin: Vector) -> Any:
-        return shape.mirror(plane_normal, plane_origin)
+        p = Plane(plane_origin, z_dir=plane_normal)
+        return shape.mirror(p)
 
     def scale(self, shape: Any, factor: float) -> Any:
         return shape.scale(factor)
 
     def select_edges(self, shape: Any, selector: str) -> list:
-        return cq.Workplane().add(shape).edges(selector).vals()
+        # build123d edge filtering by selector string
+        # Common selectors: ">Z", "<Z", ">X", "|Z", etc.
+        all_edges = shape.edges()
+        return _filter_edges(all_edges, selector)
 
     def tessellate(self, shape: Any, tolerance: float = 0.1) -> tuple[np.ndarray, np.ndarray]:
         verts, faces = shape.tessellate(tolerance)
-        v_array = np.array([[v.x, v.y, v.z] for v in verts], dtype=np.float64)
+        v_array = np.array([[v.X, v.Y, v.Z] for v in verts], dtype=np.float64)
         f_array = np.array(faces, dtype=np.int32)
         return v_array, f_array
 
 
-_active_backend: BackendProtocol = CadQueryBackend()
+def _filter_edges(edges, selector: str) -> list:
+    """Filter edges using CadQuery-style selector strings.
+
+    Supports: >X, <X, >Y, <Y, >Z, <Z (max/min along axis),
+              |X, |Y, |Z (parallel to axis).
+    """
+    if not edges:
+        return []
+
+    axis_map = {"X": Vector(1, 0, 0), "Y": Vector(0, 1, 0), "Z": Vector(0, 0, 1)}
+    sel = selector.strip()
+
+    if len(sel) < 2:
+        return list(edges)
+
+    op = sel[0]
+    axis_key = sel[1:].upper()
+    axis_vec = axis_map.get(axis_key)
+    if axis_vec is None:
+        return list(edges)
+
+    if op in (">", "<"):
+        # Sort edges by center position along axis, return those at max/min
+        def _center_val(e):
+            c = e.center()
+            return c.X * axis_vec.X + c.Y * axis_vec.Y + c.Z * axis_vec.Z
+
+        vals = [(e, _center_val(e)) for e in edges]
+        if op == ">":
+            target = max(v for _, v in vals)
+        else:
+            target = min(v for _, v in vals)
+        tol = 1e-6
+        return [e for e, v in vals if abs(v - target) < tol]
+
+    elif op == "|":
+        # Edges parallel to axis
+        result = []
+        for e in edges:
+            tangent = e.tangent_at(0.5)
+            cross = tangent.cross(axis_vec)
+            if cross.length < 1e-6:
+                result.append(e)
+        return result
+
+    return list(edges)
+
+
+_active_backend: BackendProtocol = Build123dBackend()
 
 
 def get_backend() -> BackendProtocol:
