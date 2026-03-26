@@ -89,6 +89,7 @@ backend = caid.get_backend()  # Current backend instance
 |----------|-----------|
 | **Primitives** | `box`, `cylinder`, `sphere`, `cone`, `torus` |
 | **Booleans** | `boolean_union`, `boolean_cut`, `boolean_intersect` |
+| **Modify** | `add_hole` |
 | **Operations** | `extrude`, `sweep`, `fillet`, `chamfer` |
 | **Transforms** | `translate`, `rotate`, `mirror`, `scale` |
 | **Healing** | `check_valid`, `heal`, `simplify` |
@@ -96,6 +97,7 @@ backend = caid.get_backend()  # Current backend instance
 | **Export** | `to_stl`, `to_step`, `to_brep`, `from_step`, `from_brep` |
 | **Preview** | `preview`, `preview_multi` |
 | **Compound** | `array_on_curve`, `belt_wire`, `pulley_assembly` |
+| **Formatting** | `format_result` |
 
 See [SPEC.md](SPEC.md) for the complete API specification.
 

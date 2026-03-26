@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any
+import cadquery as cq
 from cadquery import Vector
 from .result import ForgeResult
 from ._backend import get_backend
@@ -18,6 +19,52 @@ def _extract_shape(x: ForgeResult | Any) -> Any:
 
 
 _REL_TOL = 1e-4
+
+
+def add_hole(
+    shape: ForgeResult | Any,
+    radius: float,
+    depth: float | None = None,
+    face_selector: str = ">Z",
+) -> ForgeResult:
+    """Cut a cylindrical hole through a face of a solid.
+
+    Args:
+        shape: The solid to drill into.
+        radius: Hole radius in mm.
+        depth: Hole depth in mm. If None, cuts all the way through.
+        face_selector: CadQuery face selector for the drilling face (default ">Z", top face).
+    """
+    if radius <= 0:
+        return _fail(f"hole radius must be > 0, got {radius}")
+    try:
+        s = _extract_shape(shape)
+        b_ = get_backend()
+        v_before = b_.get_volume(s)
+        wp = cq.Workplane("XY").add(s).faces(face_selector).workplane()
+        if depth:
+            result_wp = wp.hole(radius * 2, depth)
+        else:
+            result_wp = wp.hole(radius * 2)
+        result = result_wp.val()
+        vr = b_.get_volume(result)
+        if vr >= v_before * (1 - _REL_TOL):
+            return ForgeResult(
+                shape=result, valid=False,
+                volume_before=v_before, volume_after=vr,
+                surface_area=b_.get_surface_area(result),
+                diagnostics={
+                    "reason": "hole did not reduce volume",
+                    "hint": "hole may not intersect face — check face_selector and radius",
+                },
+            )
+        return ForgeResult(
+            shape=result, valid=True,
+            volume_before=v_before, volume_after=vr,
+            surface_area=b_.get_surface_area(result),
+        )
+    except Exception as e:
+        return _fail("add_hole failed", exception=str(e))
 
 
 def boolean_union(a: ForgeResult | Any, b: ForgeResult | Any) -> ForgeResult:
@@ -142,10 +189,11 @@ def sweep(profile: Any, path_wire: Any) -> ForgeResult:
         return _fail("sweep failed", exception=str(e))
 
 
-def fillet(shape: Any, radius: float, edge_selector: str | None = None) -> ForgeResult:
+def fillet(shape: ForgeResult | Any, radius: float, edge_selector: str | None = None) -> ForgeResult:
     if radius <= 0:
         return _fail(f"fillet radius must be > 0, got {radius}")
     try:
+        shape = _extract_shape(shape)
         b_ = get_backend()
         v_before = b_.get_volume(shape)
         edges = None
@@ -171,10 +219,11 @@ def fillet(shape: Any, radius: float, edge_selector: str | None = None) -> Forge
         )
 
 
-def chamfer(shape: Any, distance: float, edge_selector: str | None = None) -> ForgeResult:
+def chamfer(shape: ForgeResult | Any, distance: float, edge_selector: str | None = None) -> ForgeResult:
     if distance <= 0:
         return _fail(f"chamfer distance must be > 0, got {distance}")
     try:
+        shape = _extract_shape(shape)
         b_ = get_backend()
         v_before = b_.get_volume(shape)
         edges = None
@@ -200,8 +249,9 @@ def chamfer(shape: Any, distance: float, edge_selector: str | None = None) -> Fo
         )
 
 
-def translate(shape: Any, vector: Vector) -> ForgeResult:
+def translate(shape: ForgeResult | Any, vector: Vector) -> ForgeResult:
     try:
+        shape = _extract_shape(shape)
         b_ = get_backend()
         result = b_.translate(shape, vector)
         return ForgeResult(
@@ -213,8 +263,9 @@ def translate(shape: Any, vector: Vector) -> ForgeResult:
         return _fail("translate failed", exception=str(e))
 
 
-def rotate(shape: Any, axis_origin: Vector, axis_dir: Vector, angle_deg: float) -> ForgeResult:
+def rotate(shape: ForgeResult | Any, axis_origin: Vector, axis_dir: Vector, angle_deg: float) -> ForgeResult:
     try:
+        shape = _extract_shape(shape)
         b_ = get_backend()
         result = b_.rotate(shape, axis_origin, axis_dir, angle_deg)
         return ForgeResult(
@@ -226,8 +277,9 @@ def rotate(shape: Any, axis_origin: Vector, axis_dir: Vector, angle_deg: float) 
         return _fail("rotate failed", exception=str(e))
 
 
-def mirror(shape: Any, plane_origin: Vector, plane_normal: Vector) -> ForgeResult:
+def mirror(shape: ForgeResult | Any, plane_origin: Vector, plane_normal: Vector) -> ForgeResult:
     try:
+        shape = _extract_shape(shape)
         b_ = get_backend()
         result = b_.mirror(shape, plane_normal, plane_origin)
         return ForgeResult(
@@ -239,10 +291,11 @@ def mirror(shape: Any, plane_origin: Vector, plane_normal: Vector) -> ForgeResul
         return _fail("mirror failed", exception=str(e))
 
 
-def scale(shape: Any, factor: float, origin: Vector = Vector(0, 0, 0)) -> ForgeResult:
+def scale(shape: ForgeResult | Any, factor: float, origin: Vector = Vector(0, 0, 0)) -> ForgeResult:
     if factor <= 0:
         return _fail(f"scale factor must be > 0, got {factor}")
     try:
+        shape = _extract_shape(shape)
         b_ = get_backend()
         if origin != Vector(0, 0, 0):
             shape = b_.translate(shape, Vector(-origin.x, -origin.y, -origin.z))
