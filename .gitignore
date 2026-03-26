@@ -7,3 +7,4 @@ build/
 *.stl
 *.step
 *.brep
+.DS_Store
