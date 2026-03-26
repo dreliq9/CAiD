@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caid"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+dependencies = [
+  "cadquery==2.4.0",
+  "trimesh==4.4.3",
+  "pyrender==0.1.45",
+  "Pillow==10.3.0",
+  "numpy>=1.26,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.2.0",
+  "pytest-cov==5.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
