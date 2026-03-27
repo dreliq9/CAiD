@@ -1,5 +1,5 @@
 import pytest
-from cadquery import Vector
+from caid.vector import Vector
 import caid
 
 

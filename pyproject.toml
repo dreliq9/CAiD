@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "caid"
 version = "0.1.0"
-description = "Agent-friendly CadQuery/OCCT abstraction layer with validated geometry operations"
+description = "Agent-friendly OCCT abstraction layer with validated geometry operations"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -15,11 +15,11 @@ authors = [
 ]
 
 dependencies = [
-  "cadquery>=2.4.0",
+  "cadquery-ocp>=7.7",
   "trimesh>=4.4",
   "pyrender>=0.1.45",
   "Pillow>=10.0",
-  "numpy>=1.26,<2.0",
+  "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

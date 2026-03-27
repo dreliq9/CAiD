@@ -1,3 +1,4 @@
+from .vector import Vector
 from .result import ForgeResult, format_result
 from .primitives import box, cylinder, sphere, cone, torus
 from .ops import (
@@ -14,6 +15,7 @@ from .compound import array_on_curve, belt_wire, pulley_assembly
 from ._backend import get_backend, set_backend
 
 __all__ = [
+    "Vector",
     "ForgeResult", "format_result",
     "box", "cylinder", "sphere", "cone", "torus",
     "add_hole",

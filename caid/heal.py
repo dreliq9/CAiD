@@ -9,7 +9,6 @@ from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX, TopAbs_SOLID
 from OCP.TopoDS import TopoDS
-from cadquery.occ_impl.shapes import Shape
 
 from .result import ForgeResult
 from ._backend import get_backend
@@ -25,7 +24,7 @@ def _count_topo(wrapped_shape, topo_type) -> int:
 
 
 def _get_wrapped(shape: Any):
-    """Get the OCP TopoDS_Shape from a CQ shape."""
+    """Get the OCP TopoDS_Shape from a backend shape."""
     if hasattr(shape, "wrapped"):
         return shape.wrapped
     return shape
@@ -86,15 +85,15 @@ def heal(shape: Any, precision: float = 1e-3) -> ForgeResult:
         unifier.Build()
         result = unifier.Shape()
 
-        cq_shape = Shape.cast(result)
-        checks_after = check_valid(cq_shape)
-
         b = get_backend()
+        healed = b.wrap_shape(result)
+        checks_after = check_valid(healed)
+
         return ForgeResult(
-            shape=cq_shape,
+            shape=healed,
             valid=checks_after["is_valid"],
-            volume_after=b.get_volume(cq_shape),
-            surface_area=b.get_surface_area(cq_shape),
+            volume_after=b.get_volume(healed),
+            surface_area=b.get_surface_area(healed),
             diagnostics={
                 "checks_before": checks_before,
                 "checks_after": checks_after,
@@ -113,15 +112,16 @@ def simplify(shape: Any, tolerance: float = 0.01) -> ForgeResult:
         unifier = ShapeUpgrade_UnifySameDomain(wrapped, True, True, True)
         unifier.Build()
         result = unifier.Shape()
-        cq_shape = Shape.cast(result)
 
         b = get_backend()
-        checks = check_valid(cq_shape)
+        simplified = b.wrap_shape(result)
+        checks = check_valid(simplified)
+
         return ForgeResult(
-            shape=cq_shape,
+            shape=simplified,
             valid=checks["is_valid"],
-            volume_after=b.get_volume(cq_shape),
-            surface_area=b.get_surface_area(cq_shape),
+            volume_after=b.get_volume(simplified),
+            surface_area=b.get_surface_area(simplified),
         )
     except Exception as e:
         return ForgeResult(

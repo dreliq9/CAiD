@@ -2,14 +2,14 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from cadquery import Vector
-from cadquery.occ_impl.shapes import Shape
+from .vector import Vector
+from ._backend import get_backend
 
 from OCP.BRepAdaptor import BRepAdaptor_CompCurve
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
 from OCP.GC import GC_MakeArcOfCircle
 from OCP.gp import gp_Pnt, gp_Vec, gp_Dir, gp_Trsf, gp_Ax2
-from OCP.GeomLProp import GeomLProp_CLProps
+from OCP.BRepLProp import BRepLProp_CLProps
 
 from .result import ForgeResult
 from .heal import check_valid
@@ -65,7 +65,7 @@ def array_on_curve(
 
             trsf = gp_Trsf()
             if align_to_curve:
-                props = GeomLProp_CLProps(adaptor, 1, 1e-6)
+                props = BRepLProp_CLProps(adaptor, 1, 1e-6)
                 props.SetParameter(u)
                 tangent = props.D1()
                 tan_dir = gp_Dir(tangent)
@@ -89,11 +89,12 @@ def array_on_curve(
                 failed_indices.append(idx)
                 continue
 
-            new_shape = Shape.cast(builder.Shape())
+            new_shape = get_backend().wrap_shape(builder.Shape())
             checks = check_valid(new_shape)
             if not checks["is_valid"]:
                 failed_indices.append(idx)
-            results.append(new_shape)
+            else:
+                results.append(new_shape)
 
         diag = {}
         if failed_indices:
@@ -126,7 +127,8 @@ def _compute_tangent_data(centers, radii, n):
         dist = math.hypot(dx, dy)
         angle_between = math.atan2(dy, dx)
 
-        alpha = math.asin((r1 - r2) / dist) if dist > abs(r1 - r2) else 0.0
+        ratio = (r1 - r2) / dist if dist > 1e-9 else 0.0
+        alpha = math.asin(max(-1.0, min(1.0, ratio))) if abs(ratio) <= 1.0 else 0.0
         tangent_angle = angle_between + math.pi / 2 - alpha
 
         cos_t, sin_t = math.cos(tangent_angle), math.sin(tangent_angle)
@@ -175,7 +177,7 @@ def belt_wire(
             if not wire_builder.IsDone():
                 return _fail("failed to assemble open belt wire")
             return ForgeResult(
-                shape=Shape.cast(wire_builder.Wire()), valid=True,
+                shape=get_backend().wrap_shape(wire_builder.Wire()), valid=True,
                 diagnostics={"n_edges": len(edges)},
             )
 
@@ -220,7 +222,7 @@ def belt_wire(
             return _fail("failed to assemble belt wire")
 
         return ForgeResult(
-            shape=Shape.cast(wire_builder.Wire()), valid=True,
+            shape=get_backend().wrap_shape(wire_builder.Wire()), valid=True,
             diagnostics={"n_edges": len(all_edges)},
         )
     except Exception as e:

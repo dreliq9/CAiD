@@ -1,7 +1,7 @@
 from __future__ import annotations
+import math
 from typing import Any
-import cadquery as cq
-from cadquery import Vector
+from .vector import Vector
 from .result import ForgeResult
 from ._backend import get_backend
 
@@ -21,6 +21,98 @@ def _extract_shape(x: ForgeResult | Any) -> Any:
 _REL_TOL = 1e-4
 
 
+# ---------------------------------------------------------------------------
+# Face selection helpers (replace CadQuery selector engine)
+# ---------------------------------------------------------------------------
+
+def _get_wrapped(shape: Any):
+    if hasattr(shape, "wrapped"):
+        return shape.wrapped
+    return shape
+
+
+def _select_face(shape, selector: str):
+    """Select a face from a shape using CQ-style selector strings.
+
+    Supports: >X, <X, >Y, <Y, >Z, <Z (face at max/min center along axis).
+    """
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+
+    wrapped = _get_wrapped(shape)
+    sel = selector.strip()
+    if len(sel) < 2:
+        return None
+
+    axis_map = {"X": 0, "Y": 1, "Z": 2}
+    op = sel[0]
+    axis_idx = axis_map.get(sel[1:].upper())
+    if axis_idx is None or op not in (">", "<"):
+        return None
+
+    # Collect all faces with their center coordinate along axis
+    faces = []
+    exp = TopExp_Explorer(wrapped, TopAbs_FACE)
+    while exp.More():
+        face = exp.Current()
+        props = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(face, props)
+        center = props.CentreOfMass()
+        coord = [center.X(), center.Y(), center.Z()][axis_idx]
+        faces.append((face, coord))
+        exp.Next()
+
+    if not faces:
+        return None
+
+    if op == ">":
+        target = max(v for _, v in faces)
+    else:
+        target = min(v for _, v in faces)
+
+    # Return first face at the target coordinate
+    tol = 1e-6
+    for face, v in faces:
+        if abs(v - target) < tol:
+            return face
+    return None
+
+
+def _face_center_and_normal(ocp_face):
+    """Get the center point and outward normal of an OCP face."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.TopoDS import TopoDS
+
+    # Downcast to TopoDS_Face
+    face = TopoDS.Face_s(ocp_face)
+
+    # Center via mass properties
+    props = GProp_GProps()
+    BRepGProp.SurfaceProperties_s(face, props)
+    center = props.CentreOfMass()
+
+    # Normal at center via surface adaptor
+    adaptor = BRepAdaptor_Surface(face)
+    u_mid = (adaptor.FirstUParameter() + adaptor.LastUParameter()) / 2.0
+    v_mid = (adaptor.FirstVParameter() + adaptor.LastVParameter()) / 2.0
+
+    from OCP.BRepLProp import BRepLProp_SLProps
+    slprops = BRepLProp_SLProps(adaptor, u_mid, v_mid, 1, 1e-6)
+    if slprops.IsNormalDefined():
+        n = slprops.Normal()
+        return (
+            Vector(center.X(), center.Y(), center.Z()),
+            Vector(n.X(), n.Y(), n.Z()),
+        )
+
+    # Fallback: guess normal from selector axis
+    return Vector(center.X(), center.Y(), center.Z()), Vector(0, 0, 1)
+
+
 def add_hole(
     shape: ForgeResult | Any,
     radius: float,
@@ -33,7 +125,7 @@ def add_hole(
         shape: The solid to drill into.
         radius: Hole radius in mm.
         depth: Hole depth in mm. If None, cuts all the way through.
-        face_selector: CadQuery face selector for the drilling face (default ">Z", top face).
+        face_selector: Face selector string (e.g. ">Z", "<Y"). Default ">Z" (top face).
     """
     if radius <= 0:
         return _fail(f"hole radius must be > 0, got {radius}")
@@ -41,13 +133,50 @@ def add_hole(
         s = _extract_shape(shape)
         b_ = get_backend()
         v_before = b_.get_volume(s)
-        wp = cq.Workplane("XY").add(s).faces(face_selector).workplane()
-        if depth:
-            result_wp = wp.hole(radius * 2, depth)
-        else:
-            result_wp = wp.hole(radius * 2)
-        result = result_wp.val()
+
+        # Find target face
+        ocp_face = _select_face(s, face_selector)
+        if ocp_face is None:
+            return _fail(f"face selector '{face_selector}' matched no face")
+
+        center, normal = _face_center_and_normal(ocp_face)
+
+        # Default depth: use bounding box diagonal to ensure through-hole
+        if depth is None:
+            from OCP.Bnd import Bnd_Box
+            from OCP.BRepBndLib import BRepBndLib
+            bbox = Bnd_Box()
+            BRepBndLib.Add_s(_get_wrapped(s), bbox)
+            xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+            diag = math.sqrt((xmax-xmin)**2 + (ymax-ymin)**2 + (zmax-zmin)**2)
+            depth = diag * 2
+
+        # Build cylinder tool along -normal (drilling inward from face)
+        cyl = b_.make_cylinder(radius, depth)
+
+        # Rotate cylinder from Z-axis to -normal direction
+        neg_normal = Vector(-normal.x, -normal.y, -normal.z)
+        z_axis = Vector(0, 0, 1)
+        cross = z_axis.cross(neg_normal)
+        if cross.Length > 1e-10:
+            angle = z_axis.getAngle(neg_normal) * 180.0 / math.pi
+            cyl = b_.rotate(cyl, Vector(0, 0, 0), cross, angle)
+        elif neg_normal.z < 0:
+            # 180 degree flip needed
+            cyl = b_.rotate(cyl, Vector(0, 0, 0), Vector(1, 0, 0), 180.0)
+
+        # Position: start slightly above the face along normal
+        nudge = 0.1  # mm
+        start = Vector(
+            center.x + normal.x * nudge,
+            center.y + normal.y * nudge,
+            center.z + normal.z * nudge,
+        )
+        cyl = b_.translate(cyl, start)
+
+        result = b_.boolean_cut(s, cyl)
         vr = b_.get_volume(result)
+
         if vr >= v_before * (1 - _REL_TOL):
             return ForgeResult(
                 shape=result, valid=False,

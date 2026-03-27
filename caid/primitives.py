@@ -1,6 +1,6 @@
 from __future__ import annotations
 import math
-from cadquery import Vector
+from .vector import Vector
 from .result import ForgeResult
 from ._backend import get_backend
 
