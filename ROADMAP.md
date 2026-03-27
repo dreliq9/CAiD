@@ -1,5 +1,9 @@
 # CAiD Roadmap: CadQuery → OCP Migration
 
+> **Status: COMPLETED** — Migration finished 2026-03-26. CAiD now talks directly to OCCT via OCP. CadQuery has been fully removed as a dependency. This document is preserved as historical reference for the migration that was done.
+
+---
+
 CAiD's long-term direction is to replace CadQuery internals with direct OCP (OpenCascade) calls, making CAiD itself the high-level API layer. CadQuery becomes unnecessary — CAiD talks to the kernel directly while keeping its validation, ForgeResult pattern, and BackendProtocol abstraction.
 
 ## Architecture

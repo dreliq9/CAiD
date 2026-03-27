@@ -1,19 +1,18 @@
 # CAiD
 
-An agent-friendly abstraction layer over [CadQuery](https://cadquery.readthedocs.io/) and OpenCASCADE. Every geometry operation returns a `ForgeResult` with volume tracking, validation, and diagnostics — so silent OCCT failures get caught automatically.
+An agent-friendly abstraction layer over [OpenCASCADE](https://dev.opencascade.org/) (via the [cadquery-ocp](https://pypi.org/project/cadquery-ocp/) wheel). Every geometry operation returns a `ForgeResult` with volume tracking, validation, and diagnostics — so silent OCCT failures get caught automatically.
 
-Built for AI agents that need reliable 3D modeling without wrestling with CadQuery's Workplane chaining or OCCT's silent failure modes.
+Built for AI agents that need reliable 3D modeling without wrestling with OCCT's low-level API or its silent failure modes. CAiD talks directly to the OCCT kernel through OCP — no CadQuery dependency, no conda required.
 
 ## Install
 
 ```bash
-# CadQuery requires conda (OCCT dependency)
-conda create -n cadforge python=3.11 -y
-conda activate cadforge
-conda install -c conda-forge cadquery -y
-
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install caid
 ```
+
+That's it. The `cadquery-ocp` wheel (OCCT bindings) is pulled in automatically.
 
 ## Quick Example
 
@@ -46,7 +45,7 @@ Every operation returns a `ForgeResult` instead of a raw shape:
 ```python
 result = caid.box(10, 20, 30)
 result.ok            # True if valid=True AND shape is not None
-result.shape         # The CadQuery shape (or None on failure)
+result.shape         # The OCP TopoDS_Shape (or None on failure)
 result.valid         # Geometry validity flag
 result.volume_before # mm³ (for operations that modify geometry)
 result.volume_after  # mm³
@@ -57,7 +56,7 @@ result.unwrap()      # Returns shape or raises ValueError
 
 ### Stateless API
 
-All functions are pure — no hidden state, no Workplane chaining. Pass shapes in, get ForgeResults out.
+All functions are pure — no hidden state, no chaining. Pass shapes in, get ForgeResults out.
 
 ```python
 a = caid.box(10, 10, 10)
@@ -75,13 +74,33 @@ if not result.ok:
     print(result.diagnostics)  # {"reason": "volume did not increase", "hint": "shapes may not overlap"}
 ```
 
-### Swappable Backend
+### Vector
 
-CAiD routes all geometry through a `BackendProtocol`. The default is CadQuery, but the protocol is designed so a direct OCCT backend could be swapped in.
+CAiD provides its own `Vector` class for positions and directions:
+
+```python
+from caid.vector import Vector
+
+origin = Vector(0, 0, 0)
+direction = Vector(1, 0, 0)
+box = caid.box(10, 20, 30, origin=origin, x_dir=direction)
+```
+
+### Architecture
+
+```
+MCP tools  →  CAiD (validation + API)  →  OCP (OCCT kernel)
+```
+
+CAiD routes all geometry through an `OCPBackend` that talks directly to OpenCASCADE via OCP. Shapes are raw `TopoDS_Shape` objects.
 
 ```python
 backend = caid.get_backend()  # Current backend instance
 ```
+
+## Output Directory
+
+By default, exports go to `~/cadquery-output/` (kept for backward compatibility). This is configurable.
 
 ## Available Functions
 

@@ -2,9 +2,9 @@
 
 ## What this is
 
-A Python abstraction layer that sits between AI agents and CadQuery/OCCT. The goal is not to replace CadQuery but to wrap it with a stable, agent-friendly API that validates geometry, eliminates footguns, and exposes a swappable backend seam so individual operations can be migrated to direct OCCT calls without a rewrite.
+A Python abstraction layer that sits between AI agents and the OpenCASCADE kernel (via OCP). CAiD is the high-level API — it wraps OCP with a stable, agent-friendly interface that validates geometry, eliminates footguns, and surfaces clear diagnostics on failure.
 
-This document is the complete specification. Build exactly what is described here. Do not add features not listed. Do not use CadQuery's `Workplane` chaining API in the public-facing layer — all public functions must be stateless and explicit.
+This document is the complete specification. Build exactly what is described here. Do not add features not listed. All public functions must be stateless and explicit.
 
 ---
 
@@ -14,7 +14,8 @@ This document is the complete specification. Build exactly what is described her
 caid/
   __init__.py        # re-exports public API only
   result.py          # ForgeResult dataclass — build this first
-  _backend.py        # BackendProtocol + CadQueryBackend
+  vector.py          # caid.Vector class (wraps gp_Vec/gp_Pnt)
+  _backend.py        # BackendProtocol + OCPBackend
   ops.py             # boolean, extrude, sweep, fillet, chamfer
   primitives.py      # box, cylinder, sphere, cone, torus
   heal.py            # shape healing and validity checking
@@ -48,7 +49,7 @@ name = "caid"
 requires-python = ">=3.11"
 
 dependencies = [
-  "cadquery==2.4.0",
+  "cadquery-ocp>=7.7",
   "trimesh==4.4.3",
   "pyrender==0.1.45",
   "Pillow==10.3.0",
@@ -62,7 +63,7 @@ dev = [
 ]
 ```
 
-CadQuery 2.4.0 bundles its own OCP build (`cadquery-ocp`). Do not install pythonOCC-core separately — it will conflict. If you need a direct OCCT call, import from `OCP.Core.*` inside the already-installed CadQuery environment. Note: CadQuery 2.4.0 uses `OCP.*` not the older `OCC.Core.*` namespace.
+`cadquery-ocp` provides the OCP Python bindings for OpenCASCADE. Install via pip — no conda required. Import OCCT internals from `OCP.*` (e.g. `from OCP.BRepCheck import BRepCheck_Analyzer`).
 
 ---
 
@@ -71,14 +72,15 @@ CadQuery 2.4.0 bundles its own OCP build (`cadquery-ocp`). Do not install python
 Build and test each module before starting the next. The order is a dependency chain.
 
 1. `result.py`
-2. `_backend.py`
-3. `primitives.py`
-4. `ops.py`
-5. `heal.py`
-6. `assembly.py`
-7. `export.py`
-8. `preview.py`
-9. `compound.py`
+2. `vector.py`
+3. `_backend.py`
+4. `primitives.py`
+5. `ops.py`
+6. `heal.py`
+7. `assembly.py`
+8. `export.py`
+9. `preview.py`
+10. `compound.py`
 
 ---
 
@@ -95,7 +97,7 @@ from typing import Any
 
 @dataclass
 class ForgeResult:
-    shape: Any | None                        # cadquery Shape or None on failure
+    shape: Any | None                        # OCP TopoDS_Shape or None on failure
     valid: bool                              # False if geometry is degenerate or operation failed
     volume_before: float | None = None       # mm³, None if not applicable
     volume_after: float | None = None        # mm³, None if not applicable
@@ -123,14 +125,41 @@ Rules:
 
 ---
 
+### `vector.py`
+
+CAiD's built-in Vector class. Wraps OCP's `gp_Vec` and `gp_Pnt` internally.
+
+```python
+from __future__ import annotations
+
+class Vector:
+    """Lightweight 3D vector. Converts to/from OCP gp_Vec and gp_Pnt internally."""
+
+    def __init__(self, x: float = 0, y: float = 0, z: float = 0):
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
+
+    def to_gp_vec(self):
+        from OCP.gp import gp_Vec
+        return gp_Vec(self.x, self.y, self.z)
+
+    def to_gp_pnt(self):
+        from OCP.gp import gp_Pnt
+        return gp_Pnt(self.x, self.y, self.z)
+```
+
+All public API functions accept `caid.Vector` for positions and directions. No `cadquery.Vector` anywhere.
+
+---
+
 ### `_backend.py`
 
-Defines the backend protocol and the default CadQuery implementation. Nothing outside this module should import from `cadquery` directly except `heal.py` which needs OCP internals, and `export.py` which needs CQ importers.
+Defines the backend protocol and the OCPBackend implementation. All geometry calls route through the backend.
 
 ```python
 from typing import Protocol, Any, runtime_checkable
-import cadquery as cq
-from cadquery import Vector
+from .vector import Vector
 import numpy as np
 
 @runtime_checkable
@@ -157,16 +186,21 @@ class BackendProtocol(Protocol):
     def tessellate(self, shape: Any, tolerance: float = 0.1) -> tuple[np.ndarray, np.ndarray]: ...
     # returns (vertices: np.ndarray shape (N,3), faces: np.ndarray shape (M,3))
 
-class CadQueryBackend:
-    """Default backend. Implements BackendProtocol via cadquery."""
-    # implement each method using cq.Workplane or cq.Shape directly
-    # do not expose Workplane objects in return values — always return cq.Shape
+class OCPBackend:
+    """Default backend. Implements BackendProtocol via direct OCP calls.
+
+    All methods work with raw TopoDS_Shape objects.
+    Primitives use BRepPrimAPI_Make* builders.
+    Booleans use BRepAlgoAPI_Fuse/Cut/Common.
+    Transforms use gp_Trsf + BRepBuilderAPI_Transform.
+    Edge selection uses TopExp_Explorer + geometric filtering.
+    """
 ```
 
 The backend instance is module-level state in `_backend.py`:
 
 ```python
-_active_backend: BackendProtocol = CadQueryBackend()
+_active_backend: BackendProtocol = OCPBackend()
 
 def get_backend() -> BackendProtocol:
     return _active_backend
@@ -176,19 +210,19 @@ def set_backend(backend: BackendProtocol) -> None:
     _active_backend = backend
 ```
 
-**CadQuery-specific notes**:
-- `makeSphere` defaults to a hemisphere (angleDegrees1=0, angleDegrees2=90). Use `angleDegrees1=-90, angleDegrees2=90` for a full sphere.
-- `fillet(radius, edges)` and `chamfer(distance, None, edges)` take edge lists as positional args.
-- `rotate(startVec, endVec, angleDeg)` — pass `axis_origin` and `axis_origin + axis_dir` as the two vectors.
+**OCP-specific notes**:
+- `BRepPrimAPI_MakeSphere(r).Shape()` produces a full sphere by default (no hemisphere gotcha).
+- Edge selection is implemented via `TopExp_Explorer(EDGE)` with geometric filtering, replacing CadQuery's selector engine.
+- `rotate` uses `gp_Trsf.SetRotation(gp_Ax1, radians)` + `BRepBuilderAPI_Transform`.
 
 ---
 
 ### `primitives.py`
 
-Stateless shape constructors. All positions and orientations are explicit. No workplane state.
+Stateless shape constructors. All positions and orientations are explicit.
 
 ```python
-from cadquery import Vector
+from .vector import Vector
 from .result import ForgeResult
 
 def box(
@@ -247,7 +281,7 @@ Each function must:
 Boolean operations and geometric transforms. All validated.
 
 ```python
-from cadquery import Vector
+from .vector import Vector
 from .result import ForgeResult
 
 def boolean_union(a: ForgeResult | Any, b: ForgeResult | Any) -> ForgeResult:
@@ -277,7 +311,7 @@ def extrude(
     Extrude a face in an explicit direction.
     direction is normalised internally — magnitude is ignored.
     distance must be > 0.
-    No workplane conventions. No implicit axis.
+    No implicit axis.
     """
 
 def sweep(
@@ -288,7 +322,7 @@ def sweep(
 
 def fillet(shape: Any, radius: float, edge_selector: str | None = None) -> ForgeResult:
     """
-    Fillet edges. edge_selector is a CadQuery selector string e.g. ">Z".
+    Fillet edges. edge_selector is a selector string e.g. ">Z".
     If None, fillets all edges.
     radius must be small enough that it does not exceed the minimum edge length.
     If fillet fails (common with large radii), returns valid=False with hint.
@@ -311,7 +345,7 @@ All operations route through the backend — `mirror` and `scale` do not call sh
 
 ### `heal.py`
 
-Shape healing and validity checking. This module uses OCP internals directly.
+Shape healing and validity checking. Uses OCP internals directly.
 
 ```python
 from typing import Any
@@ -352,7 +386,7 @@ def simplify(shape: Any, tolerance: float = 0.01) -> ForgeResult:
     """
 ```
 
-Import pattern for OCP internals (CadQuery 2.4.0 uses `OCP`, not `OCC.Core`):
+Import pattern for OCP internals:
 ```python
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.ShapeFix import ShapeFix_Shape, ShapeFix_Solid
@@ -368,12 +402,12 @@ from OCP.TopoDS import TopoDS
 
 ### `assembly.py`
 
-Manages collections of positioned shapes. Does not use CadQuery's `Assembly` internally — builds on the primitives and ops modules directly to keep the dependency surface narrow.
+Manages collections of positioned shapes. Pure Python data management on top of the primitives and ops modules.
 
 ```python
 from __future__ import annotations
 from dataclasses import dataclass, field
-from cadquery import Vector
+from .vector import Vector
 from typing import Any
 from .result import ForgeResult
 
@@ -433,20 +467,23 @@ def to_stl(shape: Any, path: str | Path, tolerance: float = 0.1, angular_toleran
     tolerance and angular_tolerance control mesh quality (mm, radians).
     Returns ForgeResult with shape=None, valid=True on success.
     valid=False if export fails, with diagnostics["reason"].
-    Checks the boolean return value of exportStl and verifies the file exists.
+    Uses BRepMesh_IncrementalMesh + StlAPI_Writer internally.
     """
 
 def to_step(shape: Any, path: str | Path) -> ForgeResult:
-    """Export to STEP AP214. Lossless B-rep format. Preferred for interchange."""
+    """Export to STEP AP214. Lossless B-rep format. Preferred for interchange.
+    Uses STEPControl_Writer internally."""
 
 def to_brep(shape: Any, path: str | Path) -> ForgeResult:
-    """Export to native OCCT BREP. Lossless, fastest, OCCT-only."""
+    """Export to native OCCT BREP. Lossless, fastest, OCCT-only.
+    Uses BRepTools.Write_s() internally."""
 
 def from_step(path: str | Path) -> ForgeResult:
-    """Import from STEP. Returns shape in ForgeResult."""
+    """Import from STEP. Returns shape in ForgeResult.
+    Uses STEPControl_Reader internally."""
 
 def from_brep(path: str | Path) -> ForgeResult:
-    """Import from BREP."""
+    """Import from BREP. Uses BRepTools.Read_s() + BRep_Builder internally."""
 ```
 
 ---
@@ -502,7 +539,7 @@ Note: pyrender requires an OpenGL context. In headless environments (MCP, CI) it
 High-value compound geometry operations.
 
 ```python
-from cadquery import Vector
+from .vector import Vector
 from typing import Any
 from .result import ForgeResult
 
@@ -516,7 +553,7 @@ def array_on_curve(
 ) -> ForgeResult:
     """
     Stamp `count` copies of shape along path_wire.
-    start and end are normalised path positions (0.0–1.0).
+    start and end are normalised path positions (0.0-1.0).
     If align_to_curve=True, each copy is rotated to align its Z axis
     with the curve tangent at that point.
 
@@ -611,6 +648,7 @@ Export exactly these names and nothing else:
 
 ```python
 from .result import ForgeResult
+from .vector import Vector
 from .primitives import box, cylinder, sphere, cone, torus
 from .ops import (
     boolean_union, boolean_cut, boolean_intersect,
@@ -625,7 +663,7 @@ from .compound import array_on_curve, belt_wire, pulley_assembly
 from ._backend import get_backend, set_backend
 
 __all__ = [
-    "ForgeResult",
+    "ForgeResult", "Vector",
     "box", "cylinder", "sphere", "cone", "torus",
     "boolean_union", "boolean_cut", "boolean_intersect",
     "extrude", "sweep", "fillet", "chamfer",
@@ -643,23 +681,17 @@ __all__ = [
 
 ## Known environment issues
 
-**CadQuery 2.4.0 uses OCP, not OCC.Core**: Import OCCT internals from `OCP.*` (e.g. `from OCP.BRepCheck import BRepCheck_Analyzer`), not from `OCC.Core.*`.
-
-**CadQuery's makeSphere is a hemisphere by default**: `cq.Solid.makeSphere(r)` produces a hemisphere (angleDegrees1=0, angleDegrees2=90). The backend corrects this by passing `angleDegrees1=-90, angleDegrees2=90`.
-
-**pyrender in headless/MCP context**: pyrender may fail to initialise an OpenGL context. Always wrap pyrender calls in try/except and return None from preview functions on failure. In MCP contexts, use the shell-based render pipeline instead.
-
-**CadQuery import time**: First import of cadquery takes 3–8 seconds while it initialises OCCT. This is normal.
-
 **OCCT boolean failures produce no exception**: Some degenerate booleans silently return the original shape. This is why the volume check in `ops.py` is mandatory, not optional.
 
 **fillet on complex shapes**: OCCT's fillet algorithm is fragile on shapes with small faces or near-tangent edges produced by booleans. If `fillet()` fails, the hint should say "try heal() before fillet, or reduce radius". Do not attempt to work around this at the ops layer — surface the failure clearly.
 
-**trimesh winding**: `tessellate()` in `CadQueryBackend` must return consistently-wound faces (outward normals). Use `trimesh.repair.fix_normals()` after creating the Trimesh object in `preview.py`.
+**pyrender in headless/MCP context**: pyrender may fail to initialise an OpenGL context. Always wrap pyrender calls in try/except and return None from preview functions on failure. In MCP contexts, use the shell-based render pipeline instead.
+
+**trimesh winding**: `tessellate()` in `OCPBackend` must return consistently-wound faces (outward normals). Use `trimesh.repair.fix_normals()` after creating the Trimesh object in `preview.py`.
 
 **ShapeFix_Face does not propagate**: `ShapeFix_Face` operates on face copies and does not write fixes back into the parent shape's topology. It was removed from the heal pipeline for this reason.
 
-**Install via conda, not pip**: CadQuery 2.4.0 must be installed via conda-forge (`conda install -c conda-forge cadquery=2.4.0`). Pip install fails on the `nlopt` dependency build.
+**OCCT segfaults on complex booleans**: Some degenerate boolean operations can segfault the OCCT kernel. The caid-mcp server uses subprocess isolation to mitigate this — the MCP server survives even if a single operation crashes.
 
 ---
 
