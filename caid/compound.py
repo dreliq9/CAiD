@@ -96,13 +96,27 @@ def array_on_curve(
             else:
                 results.append(new_shape)
 
-        diag = {}
+        diag = {"n_copies": len(results)}
         if failed_indices:
             diag["failed_indices"] = failed_indices
 
+        if not results:
+            return ForgeResult(shape=None, valid=False, diagnostics=diag)
+
+        # Return individual shapes as a list for the MCP layer to handle,
+        # but also provide a compound for single-shape consumers
+        from OCP.TopoDS import TopoDS_Compound
+        from OCP.BRep import BRep_Builder as _BB
+        builder = _BB()
+        compound = TopoDS_Compound()
+        builder.MakeCompound(compound)
+        for s in results:
+            wrapped = s.wrapped if hasattr(s, "wrapped") else s
+            builder.Add(compound, wrapped)
+
         return ForgeResult(
-            shape=results,
-            valid=len(results) > 0,
+            shape=compound,
+            valid=True,
             diagnostics=diag,
         )
     except Exception as e:

@@ -167,13 +167,22 @@ class OCPBackend:
     # --- Booleans ---
 
     def boolean_union(self, a: Any, b: Any) -> Any:
-        return BRepAlgoAPI_Fuse(_unwrap(a), _unwrap(b)).Shape()
+        wa, wb = _unwrap(a), _unwrap(b)
+        if wa.IsNull() or wb.IsNull():
+            raise ValueError("boolean_union: one or both operands are null shapes")
+        return BRepAlgoAPI_Fuse(wa, wb).Shape()
 
     def boolean_cut(self, a: Any, b: Any) -> Any:
-        return BRepAlgoAPI_Cut(_unwrap(a), _unwrap(b)).Shape()
+        wa, wb = _unwrap(a), _unwrap(b)
+        if wa.IsNull() or wb.IsNull():
+            raise ValueError("boolean_cut: one or both operands are null shapes")
+        return BRepAlgoAPI_Cut(wa, wb).Shape()
 
     def boolean_intersect(self, a: Any, b: Any) -> Any:
-        return BRepAlgoAPI_Common(_unwrap(a), _unwrap(b)).Shape()
+        wa, wb = _unwrap(a), _unwrap(b)
+        if wa.IsNull() or wb.IsNull():
+            raise ValueError("boolean_intersect: one or both operands are null shapes")
+        return BRepAlgoAPI_Common(wa, wb).Shape()
 
     # --- Extrude / Sweep ---
 
@@ -277,9 +286,12 @@ class OCPBackend:
                 for i in range(1, tri.NbNodes() + 1):
                     pnt = tri.Node(i).Transformed(trsf)
                     all_verts.append([pnt.X(), pnt.Y(), pnt.Z()])
+                reversed_face = face.IsReversed()
                 for i in range(1, tri.NbTriangles() + 1):
                     t = tri.Triangle(i)
                     i1, i2, i3 = t.Get()
+                    if reversed_face:
+                        i1, i2, i3 = i1, i3, i2  # flip winding
                     all_faces.append([
                         i1 - 1 + vert_offset,
                         i2 - 1 + vert_offset,

@@ -32,6 +32,10 @@ def _reorient(shape, origin: Vector, axis: Vector, default_axis: Vector = Vector
         cross = default_axis.cross(axis)
         if cross.Length > 1e-10:
             shape = b.rotate(shape, Vector(0, 0, 0), cross, angle)
+    elif default_axis.dot(axis) < 0:
+        # Anti-parallel: 180-degree flip around a perpendicular axis
+        perp = Vector(1, 0, 0) if abs(default_axis.x) < 0.9 else Vector(0, 1, 0)
+        shape = b.rotate(shape, Vector(0, 0, 0), perp, 180.0)
     if origin != Vector(0, 0, 0):
         shape = b.translate(shape, origin)
     return shape
