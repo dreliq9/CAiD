@@ -96,9 +96,11 @@ def preview(
         _add_camera_and_light(scene, view, center, extent)
 
         renderer = pyrender.OffscreenRenderer(size[0], size[1])
-        color, _ = renderer.render(scene)
-        renderer.delete()
-        return Image.fromarray(color)
+        try:
+            color, _ = renderer.render(scene)
+            return Image.fromarray(color)
+        finally:
+            renderer.delete()
     except Exception:
         return None
 
@@ -142,8 +144,10 @@ def preview_multi(
         _add_camera_and_light(scene, view, center, extent)
 
         renderer = pyrender.OffscreenRenderer(size[0], size[1])
-        color_img, _ = renderer.render(scene)
-        renderer.delete()
-        return Image.fromarray(color_img)
+        try:
+            color_img, _ = renderer.render(scene)
+            return Image.fromarray(color_img)
+        finally:
+            renderer.delete()
     except Exception:
         return None

@@ -68,6 +68,21 @@ def array_on_curve(
                 props = BRepLProp_CLProps(adaptor, 1, 1e-6)
                 props.SetParameter(u)
                 tangent = props.D1()
+                if tangent.Magnitude() < 1e-10:
+                    # Degenerate tangent (cusp) — skip alignment for this copy
+                    trsf.SetTranslation(gp_Vec(pnt.X(), pnt.Y(), pnt.Z()))
+                    builder = BRepBuilderAPI_Transform(shape_wrapped, trsf, True)
+                    builder.Build()
+                    if builder.IsDone():
+                        new_shape = get_backend().wrap_shape(builder.Shape())
+                        checks = check_valid(new_shape)
+                        if checks["is_valid"]:
+                            results.append(new_shape)
+                        else:
+                            failed_indices.append(idx)
+                    else:
+                        failed_indices.append(idx)
+                    continue
                 tan_dir = gp_Dir(tangent)
 
                 # Build local frame: Z aligned to tangent, X perpendicular
@@ -174,16 +189,36 @@ def belt_wire(
                 return _fail(f"pulleys {i} and {j} are coincident")
 
         if not closed:
-            # Open belt: tangent lines only, no arcs
+            # Open belt: tangent lines with arc segments on intermediate pulleys
             tp = _compute_tangent_data(centers, radii, n)
             edges = []
             for i in range(n - 1):
                 j = i + 1
+                # Arc on pulley i (skip first pulley — no incoming tangent)
+                if i > 0:
+                    inc = tp[i][1]   # incoming from previous tangent line
+                    out = tp[i][0]   # outgoing to next tangent line
+                    cx, cy = centers[i]
+                    r = radii[i]
+                    if inc is not None and out is not None:
+                        p_in = gp_Pnt(inc[0], inc[1], z_val)
+                        p_out = gp_Pnt(out[0], out[1], z_val)
+                        a_in = math.atan2(inc[1] - cy, inc[0] - cx)
+                        a_out = math.atan2(out[1] - cy, out[0] - cx)
+                        a_diff = a_out - a_in
+                        if a_diff < 0:
+                            a_diff += 2 * math.pi
+                        a_mid = a_in + a_diff / 2.0
+                        p_mid = gp_Pnt(cx + r * math.cos(a_mid), cy + r * math.sin(a_mid), z_val)
+                        arc = GC_MakeArcOfCircle(p_in, p_mid, p_out)
+                        edges.append(BRepBuilderAPI_MakeEdge(arc.Value()).Edge())
+
+                # Tangent line from pulley i to pulley j
                 out = tp[i][0]
-                inc = tp[j][1]
-                if out and inc:
+                inc_j = tp[j][1]
+                if out and inc_j:
                     p1 = gp_Pnt(out[0], out[1], z_val)
-                    p2 = gp_Pnt(inc[0], inc[1], z_val)
+                    p2 = gp_Pnt(inc_j[0], inc_j[1], z_val)
                     edges.append(BRepBuilderAPI_MakeEdge(p1, p2).Edge())
             wire_builder = BRepBuilderAPI_MakeWire()
             for e in edges:

@@ -32,6 +32,8 @@ def to_stl(shape: Any, path: str | Path, tolerance: float = 0.1, angular_toleran
         wrapped = _get_wrapped(shape)
         mesh = BRepMesh_IncrementalMesh(wrapped, tolerance, False, angular_tolerance)
         mesh.Perform()
+        if not mesh.IsDone():
+            return _fail("Meshing failed — shape may be degenerate")
         writer = StlAPI_Writer()
         ok = writer.Write(wrapped, p)
         if not ok:

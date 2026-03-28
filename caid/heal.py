@@ -72,13 +72,29 @@ def heal(shape: Any, precision: float = 1e-3) -> ForgeResult:
         fixer.Perform()
         result = fixer.Shape()
 
-        # 2. ShapeFix_Solid — close open shells into solids
+        # 2. ShapeFix_Solid — close open shells into solids (all solids)
+        from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
+        from OCP.TopoDS import TopoDS_Compound
+        from OCP.BRep import BRep_Builder as _BB
+
+        solids = []
         exp = TopExp_Explorer(result, TopAbs_SOLID)
-        if exp.More():
+        while exp.More():
             solid = TopoDS.Solid_s(exp.Current())
             solid_fixer = ShapeFix_Solid(solid)
             solid_fixer.Perform()
-            result = solid_fixer.Shape()
+            solids.append(solid_fixer.Shape())
+            exp.Next()
+
+        if len(solids) == 1:
+            result = solids[0]
+        elif len(solids) > 1:
+            builder = _BB()
+            compound = TopoDS_Compound()
+            builder.MakeCompound(compound)
+            for s in solids:
+                builder.Add(compound, s)
+            result = compound
 
         # 3. ShapeUpgrade_UnifySameDomain — merge coplanar faces
         unifier = ShapeUpgrade_UnifySameDomain(result, True, True, True)
@@ -110,6 +126,8 @@ def simplify(shape: Any, tolerance: float = 0.01) -> ForgeResult:
     try:
         wrapped = _get_wrapped(shape)
         unifier = ShapeUpgrade_UnifySameDomain(wrapped, True, True, True)
+        unifier.SetLinearTolerance(tolerance)
+        unifier.SetAngularTolerance(tolerance)
         unifier.Build()
         result = unifier.Shape()
 
