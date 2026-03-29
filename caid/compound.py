@@ -9,7 +9,6 @@ from OCP.BRepAdaptor import BRepAdaptor_CompCurve
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
 from OCP.GC import GC_MakeArcOfCircle
 from OCP.gp import gp_Pnt, gp_Vec, gp_Dir, gp_Trsf, gp_Ax2
-from OCP.BRepLProp import BRepLProp_CLProps
 
 from .result import ForgeResult
 from .heal import check_valid
@@ -61,14 +60,13 @@ def array_on_curve(
         failed_indices = []
 
         for idx, u in enumerate(params):
-            pnt = adaptor.Value(u)
+            pnt = gp_Pnt()
+            tangent_vec = gp_Vec()
+            adaptor.D1(u, pnt, tangent_vec)
 
             trsf = gp_Trsf()
             if align_to_curve:
-                props = BRepLProp_CLProps(adaptor, 1, 1e-6)
-                props.SetParameter(u)
-                tangent = props.D1()
-                if tangent.Magnitude() < 1e-10:
+                if tangent_vec.Magnitude() < 1e-10:
                     # Degenerate tangent (cusp) — skip alignment for this copy
                     trsf.SetTranslation(gp_Vec(pnt.X(), pnt.Y(), pnt.Z()))
                     builder = BRepBuilderAPI_Transform(shape_wrapped, trsf, True)
@@ -83,7 +81,7 @@ def array_on_curve(
                     else:
                         failed_indices.append(idx)
                     continue
-                tan_dir = gp_Dir(tangent)
+                tan_dir = gp_Dir(tangent_vec)
 
                 # Build local frame: Z aligned to tangent, X perpendicular
                 ref = gp_Dir(0, 0, 1)
@@ -91,9 +89,10 @@ def array_on_curve(
                     ref = gp_Dir(1, 0, 0)
                 x_vec = gp_Vec(ref).Crossed(gp_Vec(tan_dir))
                 x_dir = gp_Dir(x_vec)
-                ax2 = gp_Ax2(pnt, tan_dir, x_dir)
+                from OCP.gp import gp_Ax3
+                ax3 = gp_Ax3(gp_Ax2(pnt, tan_dir, x_dir))
 
-                trsf.SetTransformation(ax2)
+                trsf.SetTransformation(ax3)
                 trsf.Invert()
             else:
                 trsf.SetTranslation(gp_Vec(pnt.X(), pnt.Y(), pnt.Z()))
